@@ -1,0 +1,326 @@
+---
+title: "Real Dataset Analysis"
+# author: Javier Mtz.-Rdz.
+date-format: long
+number-sections: true
+number-depth: 4
+fig-dpi: 400
+format: 
+  pdf:
+    documentclass: article
+    header-includes: |
+      \usepackage[left=0.7in,right=0.7in,
+      top=0.7in,bottom=0.5in,footskip=0.7in]{geometry} 
+      \usepackage[document]{ragged2e}
+      \usepackage{amsmath,amsthm,amssymb,amsfonts}
+      \usepackage{mathtools}
+      % Using kp fonts
+      \usepackage{kpfonts}
+      \usepackage{dsfont}
+      \usepackage{centernot}
+      \usepackage[usenames,dvipsnames,table]{xcolor}
+      \usepackage{booktabs} % For improved table lines
+      \renewcommand{\arraystretch}{1} % Increase row spacing
+      \pagenumbering{arabic}
+      \renewcommand\thefigure{\arabic{figure}}
+    fontsize: 12pt
+    colorlinks: true
+knitr:
+  opts_chunk:
+    comment: "#>"
+    message: FALSE
+    echo: TRUE
+    warning: FALSE
+    dev: "png"
+    fig.width: 8
+    fig.height: 4.5
+    fig.align: center
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r preprocessing, include=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+
+if (!require("remotes")) install.packages("remotes")
+
+# Load all essential CRAN & standard packages
+pacman::p_load(
+    tidyverse, here, glue,
+    
+    survival, glmnet, casebase, cmprsk,
+    pec, CoxBoost, riskRegression,cbSCRIP,
+    rsample,
+    
+    kableExtra
+)
+
+# Attempt to install mytidyfunctions from GitHub if not found
+if (!requireNamespace("mytidyfunctions", quietly = TRUE))
+    remotes::install_github("JavierMtzRdz/mytidyfunctions")
+
+# Load custom fonts and set theme only if the package is available
+if (requireNamespace("mytidyfunctions", quietly = TRUE)) {
+    mytidyfunctions::set_mytheme(text = element_text(family = "Times New Roman"))
+}
+
+```
+
+```{r}
+# Load preprocessed dataset
+bladder_comp_adj <- readRDS(here("paper", "data", "bladder_comp_adj.rds"))
+
+# Create a stratified 50/50 split
+set.seed(123)
+split <- initial_split(bladder_comp_adj, prop = 0.5, strata = event)
+
+# Create training and testing data frames
+train <- training(split)
+test  <- testing(split)
+
+# Verify the proportions
+table(train$event) / nrow(train)
+table(test$event) / nrow(test)
+```
+
+## cbSCRIP
+
+```{r}
+# cbSCRIP cross validation
+
+## Check if file has been run before. 
+file_save <- here("paper", "results",
+                  glue("cv_multinom_enet.rds"))
+
+if (!file.exists(file_save)) {
+    
+    set.seed(123)
+    # Run CV
+    tictoc::tic()
+    cv_multinom_enet <- cv_cbSCRIP(
+        Surv(time, event) ~ .,
+        cbind(train[,-(2:7), , drop = FALSE],
+              train[,2:7, , drop = FALSE]),
+        n_unpenalized = 7,
+        lr_adj = 50,
+        maxit = 200,
+        fit_fun = cbSCRIP::MNlogisticSAGA_Native)
+    tictoc::toc()
+    
+    write_rds(cv_multinom_enet,
+              here("paper",
+                   "results",
+                   glue("cv_multinom_enet.rds")))
+}
+
+cv_multinom_enet <- readRDS(file_save)
+
+# CV plot
+plot(cv_multinom_enet)
+
+# Model results
+cv_multinom_enet
+cv_multinom_enet$fit.min
+cv_multinom_enet$fit.min$convergence_pass
+
+# models w/ lambda min and 1SE
+multinom_enet <- cbSCRIP(
+    cb_data = cv_multinom_enet$cb_data,
+    n_unpenalized = 7,
+    lr_adj = 50,
+    maxit = 200,
+    fit_fun = cbSCRIP::MNlogisticSAGA_Native,
+    warm_start = F,
+    lambda = c(cv_multinom_enet$lambda.min,
+               cv_multinom_enet$lambda.1se))
+
+# Print selected coefficients
+coefs_min <- multinom_enet$coefficients[[which(multinom_enet$lambdagrid == cv_multinom_enet$lambda.min)]]
+
+coefs_min[rowSums(abs(coefs_min)) > 1e-8, ]
+
+coefs_1se <- multinom_enet$coefficients[[which(multinom_enet$lambdagrid == cv_multinom_enet$lambda.1se)]]
+
+coefs_1se[rowSums(abs(coefs_1se)) > 1e-8, ]
+
+```
+
+```{r}
+# Brier Score plot
+# Set time points
+time_points <- sort(unique(test$time))
+
+# Restrict test time-points outside the training
+tmax <- max(train$time[train$event != 0], na.rm = TRUE)
+
+valid_event_times <- sort(unique(test$time[test$event != 0]))
+valid_event_times <- valid_event_times[valid_event_times <= tmax]
+
+time_points <- seq(from = min(valid_event_times),
+                   to = max(valid_event_times),
+                   length.out = 50)
+
+## Casebase
+casebase_fit <- casebase::fitSmoothHazard(
+    formula = event ~ .,
+    data = train[,1:7, , drop = FALSE],
+    time = "time",
+    ratio = 50
+)
+
+## Aalen-Johnson 
+aj_fit <- prodlim(Hist(time,event)~1, data= train)
+
+## iCoxBoost
+optim.res <- iCoxBoost(Hist(time, event)~., data = train, cause = 1, cv = TRUE)
+
+icox_fit <-  iCoxBoost(Hist(time, event)~., data = train, cause = 1,
+                    stepno = optim.res$cv.res$optimal.step)
+
+# Cause-Specific
+icr_fit = two.i.CSlassos(data = train, nlambda = 100, 
+                     var_time = "time", 
+                      var_status = "event")
+
+all_models <- list(
+    "cbSCRIP 1SE" = multinom_enet$refitted_models[[which(
+        multinom_enet$lambdagrid == cv_multinom_enet$lambda.1se
+        )]],
+    "cbSCRIP" = multinom_enet$refitted_models[[which(
+        multinom_enet$lambdagrid == cv_multinom_enet$lambda.min
+        )]],
+    "Casebase" = casebase_fit,
+    "Aalen-Johansen" = aj_fit,
+    "SHBoost" = icox_fit,
+    "enet-iCox" = icr_fit
+)
+
+# Estimate Brier Scores
+all_scores_event_1 <- Score(
+    all_models,
+    formula = Hist(time, event) ~ 1,
+    data = test,
+    times = time_points,
+    summary = "ibs",
+    se.fit = FALSE,
+    metrics = "Brier",
+    cause = 1
+)
+
+all_scores_event_2 <- Score(
+    all_models,
+    formula = Hist(time, event) ~ 1,
+    data = test,
+    times = time_points,
+    summary = "ibs",
+    se.fit = FALSE,
+    metrics = "Brier",
+    cause = 2
+)
+
+data_brier <- all_scores_event_1$Brier$score %>%
+    filter(model != "Null model") %>%
+    mutate(model = as.character(model))
+
+# Plot Brier Score
+
+cpl_palette <- c("cbSCRIP" = "#184d63", 
+                 "cbSCRIP 1SE" = "#277DA1",
+                 "Casebase" = "#16A1CD",
+                 "Aalen-Johansen" = "#43AA8B",
+                 "SHBoost" = "#F9C74F",
+                 "enet-iCox" = "#f94144")
+
+(plot_ar_briers <- data_brier |> 
+        filter(!str_detect(model, "cbSCRIP 1SE|Casebase")) |>
+  ggplot(aes(times, Brier, colour = model,
+               linewidth = ifelse(str_detect(model, "cbSCRIP"), 0.5, 0.1))) +
+    geom_line() +
+    scale_colour_manual(values = cpl_palette) +
+    scale_linewidth_continuous(range = c(0.5, 0.8),
+                               guide = "none") +
+    labs(x = "Follow-up time (months)",
+         color = "Models",
+         y = "Brier Score for Cause 1 Predictions"))
+
+ggsave(here("paper",
+            "figs",
+            "bladder_comp_brier_score.png"),
+            plot_ar_briers,
+            width = 20, height = 12, units = "cm", dpi = 300)
+
+```
+
+
+## Cause-specific Cox models with LASSO
+
+```{r}
+
+y <- Surv(time = train$time, 
+          event = as.numeric(train$event == 1))
+
+x <- model.matrix(event ~ . -time,
+                  data = train)
+
+p.fac <- rep(1, ncol(x))
+p.fac[1:6] <- 0
+
+set.seed(1234)
+cox_lasso_mod <- cv.glmnet(x = x, y = y, family = "cox",
+                          # family = "binomial",
+                          penalty.factor = p.fac,
+                          nfolds = 5,
+                          alpha = 1,   
+                          thresh = 1e-9,
+                          maxit = 1e9)
+
+plot(cox_lasso_mod)
+
+
+cc_lasso_min <- coef(cox_lasso_mod, s = cox_lasso_mod$lambda.min)
+
+select_vars_lasso <- cc_lasso_min@Dimnames[[1]][-1][cc_lasso_min@i]
+
+selected_coefs_lasso <- cc_lasso_min@x
+
+names(selected_coefs_lasso) <- select_vars_lasso
+
+selected_coefs_lasso
+
+length(selected_coefs_lasso)
+
+``` 
+
+## Cause-specific Cox models with enet
+
+```{r}
+
+p.fac <- rep(1, ncol(x))
+p.fac[1:6] <- 0
+
+set.seed(1234)
+cox_enet_mod <- cv.glmnet(x = x, y = y, family = "cox",
+                          # family = "binomial",
+                          penalty.factor = p.fac,
+                          nfolds = 5,
+                          alpha = 0.5,   
+                          thresh = 1e-9,
+                          maxit = 1e9)
+
+plot(cox_enet_mod)
+
+
+cc_enet_min <- coef(cox_enet_mod, s = cox_enet_mod$lambda.min)
+
+select_vars_enet <- cc_enet_min@Dimnames[[1]][-1][cc_enet_min@i]
+
+selected_coefs_enet <- cc_enet_min@x
+
+names(selected_coefs_enet) <- select_vars_enet
+
+selected_coefs_enet
+
+length(selected_coefs_enet)
+
+``` 

@@ -1,0 +1,432 @@
+---
+title: "Brier Score and CIF Plots"
+# author: Javier Mtz.-Rdz.
+date-format: long
+number-sections: true
+number-depth: 4
+fig-dpi: 400
+format: 
+  pdf:
+    documentclass: article
+    header-includes: |
+      \usepackage[left=0.7in,right=0.7in,
+      top=0.7in,bottom=0.5in,footskip=0.7in]{geometry} 
+      \usepackage[document]{ragged2e}
+      \usepackage{amsmath,amsthm,amssymb,amsfonts}
+      \usepackage{mathtools}
+      % Using kp fonts
+      \usepackage{kpfonts}
+      \usepackage{dsfont}
+      \usepackage{centernot}
+      \usepackage[usenames,dvipsnames,table]{xcolor}
+      \usepackage{booktabs} % For improved table lines
+      \renewcommand{\arraystretch}{1} % Increase row spacing
+      \pagenumbering{arabic}
+      \renewcommand\thefigure{\arabic{figure}}
+    fontsize: 12pt
+    colorlinks: true
+knitr:
+  opts_chunk:
+    comment: "#>"
+    message: FALSE
+    echo: TRUE
+    warning: FALSE
+    dev: "png"
+    fig.width: 8
+    fig.height: 4.5
+    fig.align: center
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r preprocessing, include=FALSE}
+
+# Load packages
+
+if (!require("pacman")) install.packages("pacman")
+
+if (!require("remotes")) install.packages("remotes")
+
+pacman::p_load(
+    tidyverse, here, glue,
+    
+    survival, glmnet, casebase, cmprsk,
+    pec, CoxBoost, riskRegression,cbSCRIP,
+    rsample,
+    
+    kableExtra
+)
+
+# Attempt to install mytidyfunctions from GitHub if not found
+if (!requireNamespace("mytidyfunctions", quietly = TRUE))
+    remotes::install_github("JavierMtzRdz/mytidyfunctions")
+
+# Load custom fonts and set theme only if the package is available
+if (requireNamespace("mytidyfunctions", quietly = TRUE)) {
+    mytidyfunctions::set_mytheme(text = element_text(family = "Times New Roman"))
+}
+
+# Setting names
+
+settings_tbl <- tibble::tribble(
+    ~setting,    ~desc,
+    "setting1",  "1. Single effects on end-point of interest",
+    "setting2", "2. Single effects on both end-points",
+    "setting3", "3. Opposing effects",
+    "setting4", "4. Mixture of effects",
+    "setting5", "5. Non-proportional hazards"
+)
+
+# Model colors
+cpl_palette <- c("cbSCRIP" = "#277DA1", 
+                 "Aalen-Johansen" = "#43AA8B",
+                 "SHBoost" = "#F9C74F",
+                 "enet-iCox" = "#f94144")
+
+# Load supporting functions
+source(here::here("paper","code","brier_cif_fns.R"))
+
+# Set folders
+img_dir <- here::here("paper","brier_figs")
+res_dir <- here::here("paper","figs")
+```
+
+```{r}
+#| echo: false
+N <- 400; p <- 120; k <- 20
+
+brier_table <- map_df(1:5,
+                      ~ {run_id <- sprintf("setting%d_N%d_p%d_k%d", ., N, p, k)
+                      res <- readRDS(here::here("paper","preds", 
+                                                paste0("results_", run_id, ".rds")))
+                      res$brier_table |> 
+                          mutate(setting = .)}) |> 
+    mutate(model = case_match(model, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = model))
+
+cat(paste0("Brier Score plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- brier_table |> 
+    tibble() |> 
+    ggplot(aes(times, Brier, colour = model,
+               linewidth = ifelse(model == "cbSCRIP", 0.5, 0.1))) +
+    geom_line() +
+    facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+    scale_colour_manual(values = cpl_palette) +
+    scale_linewidth_continuous(range = c(0.5, 0.8),
+                               guide = "none") +
+    labs(x = "Follow-up time (years)",
+         color = "Models",
+         y = "Brier Score for Cause 1 Predictions") +
+    theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("brier_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+N <- 400; p <- 500; k <- 20
+
+brier_table <- map_df(1:5,
+                      ~ {run_id <- sprintf("setting%d_N%d_p%d_k%d", ., N, p, k)
+                      res <- readRDS(here::here("paper","preds", 
+                                                paste0("results_", run_id, ".rds")))
+                      res$brier_table |> 
+                          mutate(setting = .)}) |> 
+    mutate(model = case_match(model, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = model))
+
+cat(paste0("Brier Score plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- brier_table |> 
+        tibble() |> 
+        ggplot(aes(times, Brier, colour = model,
+                   linewidth = ifelse(model == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Brier Score for Cause 1 Predictions") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("brier_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+N <- 400; p <- 500; k <- 84
+
+brier_table <- map_df(1:5,
+                      ~ {run_id <- sprintf("setting%d_N%d_p%d_k%d", ., N, p, k)
+                      res <- readRDS(here::here("paper","preds", 
+                                                paste0("results_", run_id, ".rds")))
+                      res$brier_table |> 
+                          mutate(setting = .)}) |> 
+    mutate(model = case_match(model, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = model))
+
+cat(paste0("Brier Score plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- brier_table |> 
+        tibble() |> 
+        ggplot(aes(times, Brier, colour = model,
+                   linewidth = ifelse(model == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Brier Score for Cause 1 Predictions") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("brier_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+
+N <- 400; p <- 1000; k <- 20
+
+brier_table <- map_df(1:5,
+                      ~ {run_id <- sprintf("setting%d_N%d_p%d_k%d", ., N, p, k)
+                      res <- readRDS(here::here("paper","preds", 
+                                                paste0("results_", run_id, ".rds")))
+                      res$brier_table |> 
+                          mutate(setting = .)}) |> 
+    mutate(model = case_match(model, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = model))
+
+cat(paste0("Brier Score plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- brier_table |> 
+        tibble() |> 
+        ggplot(aes(times, Brier, colour = model,
+                   linewidth = ifelse(model == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Brier Score for Cause 1 Predictions") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("brier_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+
+
+N <- 400; p <- 1000; k <- 168
+
+brier_table <- map_df(1:5,
+                      ~ {run_id <- sprintf("setting%d_N%d_p%d_k%d", ., N, p, k)
+                      res <- readRDS(here::here("paper","preds", 
+                                                paste0("results_", run_id, ".rds")))
+                      res$brier_table |> 
+                          mutate(setting = .)}) |> 
+    mutate(model = case_match(model, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = model))
+
+cat(paste0("Brier Score plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- brier_table |> 
+        tibble() |> 
+        ggplot(aes(times, Brier, colour = model,
+                   linewidth = ifelse(model == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Brier Score for Cause 1 Predictions") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("brier_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+
+# CIF score plot ----
+
+N <- 400; p <- 120; k <- 20
+
+cif_table <- map_df(1:5,
+                      ~ {cif_data_fn(N, p, k, .) |> 
+                          mutate(setting = .)}) |> 
+    mutate(Method = case_match(Method, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = Method))
+
+cat(paste0("CIF plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+
+
+(plot <- cif_table |> 
+        tibble() |> 
+        mutate(title = settings_tbl$desc[setting]) |> 
+        ggplot(aes(Time, Risk, colour = Method,
+                   linewidth = ifelse(Method == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Absolute Risk") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("cif_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+N <- 400; p <- 500; k <- 20
+
+cif_table <- map_df(1:5,
+                    ~ {cif_data_fn(N, p, k, .) |> 
+                            mutate(setting = .)}) |> 
+    mutate(Method = case_match(Method, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = Method))
+
+cat(paste0("CIF plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- cif_table |> 
+        tibble() |> 
+        mutate(title = settings_tbl$desc[setting]) |> 
+        ggplot(aes(Time, Risk, colour = Method,
+                   linewidth = ifelse(Method == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Absolute Risk") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("cif_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+N <- 400; p <- 500; k <- 84
+
+cif_table <- map_df(1:5,
+                    ~ {cif_data_fn(N, p, k, .) |> 
+                            mutate(setting = .)}) |> 
+    mutate(Method = case_match(Method, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = Method))
+
+cat(paste0("CIF plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- cif_table |> 
+        tibble() |> 
+        mutate(title = settings_tbl$desc[setting]) |> 
+        ggplot(aes(Time, Risk, colour = Method,
+                   linewidth = ifelse(Method == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Absolute Risk") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("cif_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+N <- 400; p <- 1000; k <- 20
+
+cif_table <- map_df(1:5,
+                    ~ {cif_data_fn(N, p, k, .) |> 
+                            mutate(setting = .)}) |> 
+    mutate(Method = case_match(Method, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = Method))
+
+cat(paste0("CIF plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- cif_table |> 
+        tibble() |> 
+        mutate(title = settings_tbl$desc[setting]) |> 
+        ggplot(aes(Time, Risk, colour = Method,
+                   linewidth = ifelse(Method == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Absolute Risk") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("cif_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+
+
+
+N <- 400; p <- 1000; k <- 168
+
+cif_table <- map_df(1:5,
+                    ~ {cif_data_fn(N, p, k, .) |> 
+                            mutate(setting = .)}) |> 
+    mutate(Method = case_match(Method, "iCR" ~ "enet-iCox", "Boosted Fine-Gray" ~ "SHBoost",
+                              .default = Method))
+
+cat(paste0("CIF plot \n Setting: n = ", N, ", p = ", p, ", k = ", k))
+
+(plot <- cif_table |> 
+        tibble() |> 
+        mutate(title = settings_tbl$desc[setting]) |> 
+        ggplot(aes(Time, Risk, colour = Method,
+                   linewidth = ifelse(Method == "cbSCRIP", 0.5, 0.1))) +
+        geom_line() +
+        facet_wrap(. ~ title, nrow = 2, scale = "free_x") +
+        scale_colour_manual(values = cpl_palette) +
+        scale_linewidth_continuous(range = c(0.5, 0.8),
+                                   guide = "none") +
+        labs(x = "Follow-up time (years)",
+             color = "Models",
+             y = "Absolute Risk") +
+        theme(legend.position = c(0.8, 0.2)))
+
+
+out_name   <- file.path(res_dir, sprintf("cif_grid_N%d_p%d_k%d.png", N, p, k))
+
+ggsave(out_name, plot,
+       width = 20, height = 12, units = "cm", dpi = 300)
+```

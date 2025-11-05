@@ -1,0 +1,286 @@
+---
+title: "Real Dataset Analysis"
+# author: Javier Mtz.-Rdz.
+date-format: long
+number-sections: true
+number-depth: 4
+fig-dpi: 400
+format: 
+  pdf:
+    documentclass: article
+    header-includes: |
+      \usepackage[left=0.7in,right=0.7in,
+      top=0.7in,bottom=0.5in,footskip=0.7in]{geometry} 
+      \usepackage[document]{ragged2e}
+      \usepackage{amsmath,amsthm,amssymb,amsfonts}
+      \usepackage{mathtools}
+      % Using kp fonts
+      \usepackage{kpfonts}
+      \usepackage{dsfont}
+      \usepackage{centernot}
+      \usepackage[usenames,dvipsnames,table]{xcolor}
+      \usepackage{booktabs} % For improved table lines
+      \renewcommand{\arraystretch}{1} % Increase row spacing
+      \pagenumbering{arabic}
+      \renewcommand\thefigure{\arabic{figure}}
+    fontsize: 12pt
+    colorlinks: true
+knitr:
+  opts_chunk:
+    comment: "#>"
+    message: FALSE
+    echo: TRUE
+    warning: FALSE
+    dev: "png"
+    fig.width: 8
+    fig.height: 4.5
+    fig.align: center
+editor_options: 
+  chunk_output_type: console
+bibliography: ../refs/competing-risk.bib
+---
+
+```{r preprocessing, include=FALSE}
+# Setup ----
+## Packages to use ----
+
+#' To install mytidyfunctions, you need 
+#' remotes::install_github("JavierMtzRdz/mytidyfunctions")
+if (!require("pacman")) install.packages("pacman")
+if (!require("mytidyfunctions")) remotes::install_github("JavierMtzRdz/mytidyfunctions")
+
+
+pacman::p_load(tidyverse, janitor, writexl, 
+              readxl, scales, mytidyfunctions,
+              patchwork, here, 
+              mtool, bench, kableExtra)
+
+library(casebase)
+library(future.apply)
+library(glmnet)
+library(mtool)
+library(parallel)
+library(tictoc)
+library(tidyverse)
+library(foreach)
+library(survival)
+library(cmprsk)
+library(glue)
+library(pec)
+library(survminer)
+library(rsample)
+library(cbSCRIP)
+
+
+
+# source(here(#"MSc_criskcasebase",
+            # "notes_jmr","code", "fitting_functionsV2.R"))
+# source(here(#"MSc_criskcasebase",
+            # "notes_jmr","code", "fitting_functionsV3.R"))
+
+## Load fonts ----
+extrafont::loadfonts(quiet = TRUE)
+
+## Set theme ------
+mytidyfunctions::set_mytheme(text = element_text(family = "Times New Roman"))
+
+
+# Set-up process
+
+save <- F
+
+```
+
+This analysis compares distinct approaches for modelling competing risks using a high-dimensional dataset on non-muscle-invasive bladder cancer from @DyrskjotKruhofferThykjaer:2004. This dataset includes gene expression (1,381 variables), clinical information, records of death (for bladder cancer, other causes, and not registered), and the time to the event (progression-free survival). In total, the dataset contains 404 observations.
+
+We will compare the performance of this multinomial model against a penalized binary Cox proportional hazards model. In this common approach, a separate model is fitted for each event type, treating all other competing events as censored. This dataset has previously been analyzed by @TapakSaidijamSadeghifar:2015 using cause-specific Cox models with LASSO, elastic net, SCAD, and SICA penalizations to identify prognostic gene signatures. 
+
+# Preprocess data
+
+First, the two gene expression files were loaded, combined, and transposed to create a dataset where each row is a patient and each column is a gene probe. Next, the clinical data was loaded and cleaned by handling missing values and formatting key variables for survival analysis, including the survival `time` and a categorical `event` for competing outcomes. A minor adjustment was made, converting any survival times of 0 to 0.001 to prevent computational errors.
+
+Finally, the gene expression and clinical datasets were merged by a unique `sample_id`. The resulting dataset was then filtere to include only the patient cohort used in the original study [@DyrskjotKruhofferThykjaer:2004] and to remove samples with missing data.  As a result, the dataset kept 301 out of the 404 original observations.
+
+```{r}
+# Process microarray data ---
+bladder_fpd1 <- read_delim(here::here("paper/data/GSE5479_Final_processed_data_1.txt"))
+bladder_fpd2 <- read_delim(here::here("paper/data/GSE5479_Final_processed_data_2.txt"))
+
+bladder_fpd <- t(cbind(bladder_fpd1[, -1], bladder_fpd2[, -1])) %>% 
+    data.frame() %>% 
+    tibble() %>% 
+    bind_cols(tibble(sample_id = c(names(bladder_fpd1[, -1]), 
+                            names(bladder_fpd2[, -1])))) %>% 
+    set_names(c(bladder_fpd1$probe, "sample_id")) %>% 
+    clean_names() %>% 
+    select(sample_id, everything())
+
+# Process clinical information
+
+bladder_hd <- read_xls(here::here("paper/data/6517200/10780432ccr062940-sup-supplemental_file_1.xls")) %>% 
+    clean_names() %>% 
+    mutate(across(everything(), \(x)case_when(x == "-" ~ NA, 
+                                              T ~ x))) %>% 
+    transmute(
+        sample_id = case_match(sample_id,
+                               "1082-1" ~ "1082-1_DK",
+                               "20421_S (91?)" ~ "20421_S",
+                               .default = sample_id),
+        country,
+        # Survival time and event 
+        event = progression_0_no_progression_1_progression_to_t1_2_progression_to_t2,
+        time = as.numeric(progression_free_survival),
+        # time = as.numeric(follow_up_total),
+        # Adjust time = 0
+        time = ifelse(time == 0, 0.001, time),
+        # Clinical variables
+        age = as.numeric(age),
+        female = if_else(str_trim(sex) == "F", 1, 0),
+        progression = factor(
+            progression_0_no_progression_1_progression_to_t1_2_progression_to_t2),
+        clinicalrisk = clinical_risk_1_high_risk_0_low_risk,
+        followup = follow_up_months_from_tumor_to_last_visit_to_the_clinic_or_to_cystectomy,
+        ## Reclassification of NA based on paper
+        treatment = case_when(is.na(bcg_mmc_treatment) ~ "No treatment",
+                              T ~ bcg_mmc_treatment),
+        cystectomy = cystectomy,
+        grade = reevaluated_who_grade_no_reevaluation,
+        stage = reevaluated_pathological_disease_stage_no_reevaluation,
+        # Identify samples used in the original paper's model training/validation
+        progmodel = as.numeric(!is.na(samples_used_for_training_progression_classifier) | !is.na(samples_used_for_validating_progression_classifier))
+ )
+
+
+# Create complete bd
+bladder_comp <- bladder_hd %>% 
+    mutate(sample_id = case_when(sample_id == "692-1" ~ paste0(sample_id,
+                                                               "_",
+                                                               country),
+                                  T ~ sample_id)) %>%
+    select(-country) %>%
+    full_join(bladder_fpd %>% 
+                  #' Creating individual ID's for repeated ids.
+                  #' It assumes that the samples follow the same order as in 
+                  #' supplementary file.
+                  mutate(sample_id = case_when(sample_id == "692-1...144" ~ "692-1_F",
+                                               sample_id == "692-1...145" ~ "692-1_DK",
+                                               T ~ sample_id)), 
+              by = join_by(sample_id)) %>% 
+    filter(progmodel == 1,
+           !is.na(age),
+           !is.na(female)) %>% 
+    select(-sample_id, -clinicalrisk, -cystectomy,
+           -progmodel, -followup, -progression)
+
+
+```
+
+# EDA
+
+The majority of patients (227) were censored, 20 patients died from bladder cancer and 54 patients died from other causes. 
+
+```{r}
+#" Count events
+bladder_comp %>% 
+    count(event) %>% 
+    adorn_totals()
+```
+
+
+The distribution of progression-free survival time is multi-modal, with a notable peak around 50 months and a long right tail. The average progression-free survival time across the cohort was 49.5 months. The population time plot visualizes the decrease in the at-risk population over the study's duration, with points indicating when progression events occurred.
+
+```{r}
+# Time 
+## Time dist
+bladder_comp %>% 
+    ggplot(aes(x = time)) +
+    geom_density() +
+    labs(x = "Progression free survival",
+         y = "Density")
+
+## Mean time
+mean(bladder_comp$event)
+
+## Population time plot
+plot(popTime(bladder_comp, "time", "event"),
+      add.competing.event = TRUE,
+     comprisk = TRUE)
+```
+
+
+The patient population is predominantly male (241 males vs. 60 females), with an age distribution that peaks around 70 years.
+
+```{r}
+# Clinical variables
+## Age dist
+bladder_comp %>% 
+    ggplot(aes(x = age,)) +
+    geom_density(fill = "grey") +
+    labs(x = "Age",
+         y = "Density")
+
+bladder_comp %>% 
+    ggplot(aes(x = age, colour = as.character(event),
+               fill = as.character(event))) +
+    geom_density(alpha = 0.5) +
+    labs(x = "Age",
+         y = "Density")
+
+## Categorical var. levels
+bladder_comp %>% 
+    select(female:stage) %>% 
+    mutate(across(everything(), as.character)) %>% 
+    pivot_longer(everything(),
+                 names_to = "Var",
+                 values_to = "Category") %>% 
+    group_split(Var, .keep = T) %>% 
+    map(~count(.,Var, Category) %>% 
+    adorn_totals())
+```
+
+
+Analysis of the clinical categories indicates that most patients had high-grade tumors and were at the pTa stage. A significant portion of the cohort (219 patients) did not receive intravesical BCG or MMC treatment.
+
+Based on these categories, grade, stage, and treatment were recategorized as done in @KeBandyopadhyaySarkar:2023. The PUNLMP (Papillary Urothelial Neoplasm of Low Malignant Potential) was classified as a low-grade. For the stage, all derived subcomments were removed, leaving only the pTa, pTis, and T1 categories. In comparison to @KeBandyopadhyaySarkar:2023, they removed the observation with pTis stage. Lastly, treatment was classified as non versus either BCG or MMC. Another relevant difference from @KeBandyopadhyaySarkar:2023 is that they categorized age; however, we do not have a clear reason to create arbitrary groups. 
+
+It is worth noting that the baseline categories were set to low for grade, pTa for stage, and none for treatment. This is especially relevant as the coefficients depend on the baseline group. Additionally, this can explain a different selection compared to previous studies using case-specific Cox models. For example, @TapakSaidijamSadeghifar:2015 used these models, but the preprocessing for the clinical variables and baseline categories was not found.
+
+```{r}
+# Adjust categories
+bladder_comp_adj <- bladder_comp %>% 
+    mutate(grade = str_remove(grade, "\\*| OBS"),
+           grade = case_when(str_detect(grade, "PUNLMP") ~ "LOW",
+                             T ~ grade),
+           grade = fct_relevel(grade, "LOW"),
+           stage = case_when(str_detect(stage, "pTa") ~ "pTa",
+                             str_detect(stage, "T1|pTis") ~ "T1",
+                             T ~ stage),
+           stage = fct_relevel(stage, "pTa"),
+           # No treatment as base
+           treatment = ifelse(str_detect(treatment, "BCG|MMC"), 1, 
+                              0)) 
+
+bladder_comp_adj %>% 
+    select(female:stage) %>% 
+    mutate(across(everything(), as.character)) %>% 
+    pivot_longer(everything(),
+                 names_to = "Var",
+                 values_to = "Category") %>% 
+    group_split(Var, .keep = T) %>% 
+    map(~count(.,Var, Category) %>% 
+    adorn_totals())
+
+
+## Categorical var. levels
+
+bladder_comp_adj <- model.matrix(~ .,
+                                 data = bladder_comp_adj)[,-1] %>% 
+    as_tibble()
+
+saveRDS(bladder_comp_adj,
+        here("paper", "data", "bladder_comp_adj.rds"))
+
+```
+
+# References
+
