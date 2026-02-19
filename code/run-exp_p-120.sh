@@ -7,10 +7,9 @@ echo "Starting analysis loop..."
 # --- Configuration ---
 # Start and end of index loop.
 START_INDEX=1
-END_INDEX=30
+END_INDEX=10
 
-# Define path
-R_SCRIPT_NAME="paper/code/fit-curve-lambda.R"
+R_SCRIPT_NAME="code/01_simulations.R"
 
 # --- Additional Arguments ---
 # Define static arguments that will be passed to the R script 

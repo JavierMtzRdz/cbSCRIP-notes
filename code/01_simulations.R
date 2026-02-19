@@ -48,7 +48,7 @@ save_dir_preds <- here("results", "simulation", "preds")
 dir.create(save_dir_varsel, recursive = TRUE, showWarnings = FALSE)
 dir.create(save_dir_preds, recursive = TRUE, showWarnings = FALSE)
 
-message(glue("Starting setting {setting}, p={p}, rep={iter}"))
+cli::cli_alert_info(paste0(glue("Starting setting {setting}, p={p}, rep={iter}")))
 
 # Generate data
 data <- gen_data(n_train = n_train, n_test = n_test, p = p, 
@@ -75,7 +75,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
              lambda.select = "lambda.1se", nlambda = 30)
         })["elapsed"]
     }, error = function(e) {
-        message("   two.cv.CSlassos failed: ", e$message)
+        cli::cli_alert_info(paste0("   two.cv.CSlassos failed: ", e$message))
     })
 
     # Direct glmnet path model for variable selection
@@ -92,7 +92,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
             nlambda = 30
         )
     }, error = function(e) {
-        message("   glmnet path fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   glmnet path fitting failed: ", e$message))
     })
 
     # 2. cbSCRIP (Elastic Net Case-Base)
@@ -103,7 +103,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
             cb_mod <- cbSCRIP(Surv(ftime, fstatus) ~ ., train, coeffs = "original", alpha = 0.5, nlambda = 30)
         })["elapsed"]
     }, error = function(e) {
-        message("   cbSCRIP fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   cbSCRIP fitting failed: ", e$message))
     })
 
     # 3. Penalized Fine-Gray (fastcmprsk)
@@ -116,7 +116,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
                                lambda = lambdas, penalty = "ENET", alpha = 0.5)
         })["elapsed"]
     }, error = function(e) {
-        message("   fastCrrp fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   fastCrrp fitting failed: ", e$message))
     })
 
     # 4. Random Forest SRC
@@ -128,7 +128,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
                             ntree = 500, splitrule = "logrank", cause = 1)
         })["elapsed"]
     }, error = function(e) {
-        message("   rfsrc fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   rfsrc fitting failed: ", e$message))
     })
 
     # 5. Aalen-Johansen (for reference prediction)
@@ -136,7 +136,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
     tryCatch({
         aj_mod <- prodlim(Hist(ftime, fstatus) ~ 1, data = train)
     }, error = function(e) {
-        message("   prodlim fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   prodlim fitting failed: ", e$message))
     })
     
     # 6. SHBoost (iCoxBoost)
@@ -153,7 +153,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
             sh_mod <- iCoxBoost(Hist(ftime, fstatus) ~ ., data = train, cause = 1, stepno = opt_step)
         })["elapsed"]
     }, error = function(e) {
-        message("   iCoxBoost fitting failed: ", e$message)
+        cli::cli_alert_info(paste0("   iCoxBoost fitting failed: ", e$message))
     })
     
     # Clean formula environments to prevent circular references
@@ -194,12 +194,12 @@ t_fg <- fits$t_fg
 t_rf <- fits$t_rf
 t_sh <- fits$t_sh
 
-message(sprintf("   - Fit times: enet-iCox=%s | cbSCRIP=%s | Penalized Fine-Gray=%s | Random Forest=%s | SHBoost=%s", 
+cli::cli_alert_info(paste0(sprintf("   - Fit times: enet-iCox=%s | cbSCRIP=%s | Penalized Fine-Gray=%s | Random Forest=%s | SHBoost=%s", 
                 if (is.na(t_cox)) "FAILED" else sprintf("%.2fs", t_cox),
                 if (is.na(t_cb)) "FAILED" else sprintf("%.2fs", t_cb),
                 if (is.na(t_fg)) "FAILED" else sprintf("%.2fs", t_fg),
                 if (is.na(t_rf)) "FAILED" else sprintf("%.2fs", t_rf),
-                if (is.na(t_sh)) "FAILED" else sprintf("%.2fs", t_sh)))
+                if (is.na(t_sh)) "FAILED" else sprintf("%.2fs", t_sh))))
 
 
 
@@ -258,20 +258,20 @@ max_tpr_cb <- if (!is.null(varsel_cb)) max(varsel_cb$Sensitivity, na.rm = TRUE) 
 max_tpr_cox <- if (!is.null(varsel_cox)) max(varsel_cox$Sensitivity, na.rm = TRUE) else NA
 max_tpr_fg <- if (!is.null(varsel_fg)) max(varsel_fg$Sensitivity, na.rm = TRUE) else NA
 
-message(sprintf("   - Max Sensitivity (TPR): cbSCRIP=%s | enet-iCox=%s | Penalized Fine-Gray=%s", 
+cli::cli_alert_info(paste0(sprintf("   - Max Sensitivity (TPR): cbSCRIP=%s | enet-iCox=%s | Penalized Fine-Gray=%s", 
                 if (is.na(max_tpr_cb)) "FAILED" else sprintf("%.1f%%", max_tpr_cb * 100), 
                 if (is.na(max_tpr_cox)) "FAILED" else sprintf("%.1f%%", max_tpr_cox * 100), 
-                if (is.na(max_tpr_fg)) "FAILED" else sprintf("%.1f%%", max_tpr_fg * 100)))
-message(sprintf("   - Exact target selection: cbSCRIP=%s | enet-iCox=%s | Penalized Fine-Gray=%s", 
+                if (is.na(max_tpr_fg)) "FAILED" else sprintf("%.1f%%", max_tpr_fg * 100))))
+cli::cli_alert_info(paste0(sprintf("   - Exact target selection: cbSCRIP=%s | enet-iCox=%s | Penalized Fine-Gray=%s", 
                 if (!is.null(varsel_cb) && any(varsel_cb$exact_match)) "YES" else "NO",
                 if (!is.null(varsel_cox) && any(varsel_cox$exact_match)) "YES" else "NO",
-                if (!is.null(varsel_fg) && any(varsel_fg$exact_match)) "YES" else "NO"))
+                if (!is.null(varsel_fg) && any(varsel_fg$exact_match)) "YES" else "NO")))
 
 # Save Variable Selection Output
 saveRDS(varsel_results, file.path(save_dir_varsel, glue("varsel_s{setting}_p{p}_k{num_true}_rep{iter}.rds")))
 
 # # --- Evaluate Predictive Metrics (Brier Score, AUC) ---
-message("   Computing Brier scores and AUC...")
+cli::cli_alert_info(paste0("   Computing Brier scores and AUC..."))
 
 # Time grid: 20 quantile points within observed event range
 brier_tp <- sort(unique(test$ftime))
@@ -281,7 +281,7 @@ brier_tp <- brier_tp[brier_tp <= brier_tmax]
 brier_tp <- sort(unique(quantile(brier_tp, probs = seq(0, 1, length.out = 20), type = 1)))
 
 # --- CV-based unpenalized refitting (original paper approach) ---
-message("   Running cross-validation to select optimal lambda...")
+cli::cli_alert_info(paste0("   Running cross-validation to select optimal lambda..."))
 
 # Define global variables to bypass the cv_cbSCRIP package bug and let defaults work
 lambda_max <<- NULL
@@ -290,7 +290,7 @@ lambda.min.ratio <<- NULL
 fit_cv <- tryCatch(
     cv_cbSCRIP(Surv(ftime, fstatus) ~ ., train, nlambda = 30, alpha = 0.5, ratio = 50),
     error = function(e) {
-        message("   cv_cbSCRIP failed: ", e$message)
+        cli::cli_alert_info(paste0("   cv_cbSCRIP failed: ", e$message))
         NULL
     }
 )
@@ -308,12 +308,12 @@ if (!is.null(fit_cv)) {
     }
     
     # Fit adjusted (unpenalized) model at lambda.1se
-    message(glue("   Fitting adjusted model at lambda.1se: {fit_cv$lambda.1se}"))
+    cli::cli_alert_info(paste0(glue("   Fitting adjusted model at lambda.1se: {fit_cv$lambda.1se}")))
     cb_mod_refitted <- tryCatch(
         cbSCRIP(cb_data = fit_cv$cb_data, alpha = 0.5,
                 lambda = fit_cv$lambda.1se, coeffs = "adjusted"),
         error = function(e) {
-            message("   Adjusted model refit failed at lambda.1se: ", e$message)
+            cli::cli_alert_info(paste0("   Adjusted model refit failed at lambda.1se: ", e$message))
             NULL
         }
     )
@@ -321,7 +321,7 @@ if (!is.null(fit_cv)) {
 
 # Fallback: if CV fails, use our BIC lambda selection as a backup
 if (is.null(cb_mod_refitted) && !is.null(cb_mod)) {
-    message("   Using fallback BIC lambda selection...")
+    cli::cli_alert_info(paste0("   Using fallback BIC lambda selection..."))
     tryCatch({
         bic_res <- cbSCRIP::select_lambda_bic(cb_mod)
         lambda_val <- bic_res$lambda.min.bic
@@ -331,7 +331,7 @@ if (is.null(cb_mod_refitted) && !is.null(cb_mod)) {
             error = function(e) NULL
         )
     }, error = function(e) {
-        message("   BIC selection failed: ", e$message)
+        cli::cli_alert_info(paste0("   BIC selection failed: ", e$message))
     })
 }
 
@@ -358,7 +358,7 @@ sc <- tryCatch(
           summary = "ibs", se.fit = FALSE,
           metrics = c("Brier", "AUC"), cause = 1),
     error = function(e) {
-        message("   Score() failed: ", e$message)
+        cli::cli_alert_info(paste0("   Score() failed: ", e$message))
         NULL
     }
 )
@@ -382,15 +382,15 @@ if (!is.null(sc)) {
 }
 
 if (!is.null(brier_table))
-    message(sprintf("   Brier: %d rows, models: %s",
-                    nrow(brier_table), paste(unique(brier_table$model), collapse = ", ")))
+    cli::cli_alert_info(paste0(sprintf("   Brier: %d rows, models: %s",
+                    nrow(brier_table), paste(unique(brier_table$model), collapse = ", "))))
 if (!is.null(auc_table))
-    message(sprintf("   AUC: %d rows, models: %s",
-                    nrow(auc_table), paste(unique(auc_table$model), collapse = ", ")))
+    cli::cli_alert_info(paste0(sprintf("   AUC: %d rows, models: %s",
+                    nrow(auc_table), paste(unique(auc_table$model), collapse = ", "))))
 
 
 # --- CIF Curves ---
-message("   Computing CIF curves...")
+cli::cli_alert_info(paste0("   Computing CIF curves..."))
 
 cif_table <- tryCatch({
     rows <- list()
@@ -451,13 +451,13 @@ cif_table <- tryCatch({
 
     bind_rows(rows)
 }, error = function(e) {
-    message("   CIF failed: ", e$message)
+    cli::cli_alert_info(paste0("   CIF failed: ", e$message))
     NULL
 })
 
 if (!is.null(cif_table))
-    message(sprintf("   CIF: %d rows, methods: %s",
-                    nrow(cif_table), paste(unique(cif_table$Method), collapse = ", ")))
+    cli::cli_alert_info(paste0(sprintf("   CIF: %d rows, methods: %s",
+                    nrow(cif_table), paste(unique(cif_table$Method), collapse = ", "))))
 
 
 # --- Save results bundle ---
@@ -487,7 +487,7 @@ results_bundle <- list(
 )
 
 saveRDS(results_bundle, file.path(save_dir_preds, glue("models_s{setting}_p{p}_k{num_true}_rep{iter}.rds")))
-message(glue("Completed setting {setting}, p={p}, k={num_true}, rep={iter}"))
+cli::cli_alert_info(paste0(glue("Completed setting {setting}, p={p}, k={num_true}, rep={iter}")))
 
 # --- Variable Selection ROC Plot (untracked output) ---
 figs_dir <- here("figs", "varsel_plots")

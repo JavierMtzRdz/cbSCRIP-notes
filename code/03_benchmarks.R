@@ -23,7 +23,7 @@ if (length(pred_files) == 0) {
     stop("No simulation output files found in paper/results/preds/. Please run simulations first.")
 }
 
-message(glue("Found {length(pred_files)} simulation result files. Aggregating timing info..."))
+cli::cli_alert_info(paste0(glue("Found {length(pred_files)} simulation result files. Aggregating timing info...")))
 
 # Extract timing data
 timing_list <- list()
@@ -91,4 +91,4 @@ plot_benchmark <- ggplot(timing_summary, aes(x = as.factor(p), y = mean_time, fi
 # Save Plot & Data
 ggsave(here("figs", "timing_benchmark.png"), plot_benchmark, width = 8, height = 5, dpi = 300)
 saveRDS(timing_summary, file.path(benchmark_dir, "timing_results.rds"))
-message("Timing benchmark plot and results successfully saved.")
+cli::cli_alert_info(paste0("Timing benchmark plot and results successfully saved."))

@@ -18,7 +18,7 @@ dir.create(results_dir, showWarnings = FALSE, recursive = TRUE)
 # ==============================================================================
 # 1. VARIABLE SELECTION SUMMARY
 # ==============================================================================
-message("=== Variable Selection ===")
+cli::cli_alert_info(paste0("=== Variable Selection ==="))
 
 varsel_files <- list.files(varsel_dir, pattern = "\\.rds$", full.names = TRUE)
 if (length(varsel_files) > 0) {
@@ -52,23 +52,23 @@ if (length(varsel_files) > 0) {
         )
     write.csv(varsel_summary, file.path(results_dir, "varsel_summary.csv"),
               row.names = FALSE)
-    message(sprintf("Saved varsel_summary.csv  [%d rows]", nrow(varsel_summary)))
+    cli::cli_alert_info(paste0(sprintf("Saved varsel_summary.csv  [%d rows]", nrow(varsel_summary))))
 } else {
-    message("No varsel files found in ", varsel_dir)
+    cli::cli_alert_info(paste0("No varsel files found in ", varsel_dir))
 }
 
 
 # ==============================================================================
 # 2. BRIER SCORE SUMMARY  (pre-computed by 01_simulations.R)
 # ==============================================================================
-message("\n=== Brier Score ===")
+cli::cli_alert_info(paste0("\n=== Brier Score ==="))
 
 preds_files <- list.files(preds_dir, pattern = "\\.rds$", full.names = TRUE)
 if (length(preds_files) > 0) {
     brier_list <- lapply(preds_files, function(fp) {
         res <- readRDS(fp)
         if (is.null(res$brier_table)) {
-            message("  Skipping ", basename(fp), " (no brier_table)")
+            cli::cli_alert_info(paste0("  Skipping ", basename(fp), " (no brier_table)"))
             return(NULL)
         }
         bt <- res$brier_table
@@ -128,29 +128,29 @@ if (length(preds_files) > 0) {
             )
         write.csv(brier_summary, file.path(results_dir, "brier_summary.csv"),
                   row.names = FALSE)
-        message(sprintf("Saved brier_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
+        cli::cli_alert_info(paste0(sprintf("Saved brier_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
                         nrow(brier_summary),
                         paste(sort(unique(brier_summary$setting)), collapse = ","),
                         paste(sort(unique(brier_summary$p)),       collapse = ","),
-                        paste(sort(unique(brier_summary$k)),       collapse = ",")))
+                        paste(sort(unique(brier_summary$k)),       collapse = ","))))
     } else {
-        message("No Brier tables found (run simulations first or check 01_simulations.R)")
+        cli::cli_alert_info(paste0("No Brier tables found (run simulations first or check 01_simulations.R)"))
     }
 } else {
-    message("No prediction files found in ", preds_dir)
+    cli::cli_alert_info(paste0("No prediction files found in ", preds_dir))
 }
 
 
 # ==============================================================================
 # 3. CIF CURVE SUMMARY  (pre-computed by 01_simulations.R)
 # ==============================================================================
-message("\n=== CIF Curves ===")
+cli::cli_alert_info(paste0("\n=== CIF Curves ==="))
 
 if (length(preds_files) > 0) {
     cif_list <- lapply(preds_files, function(fp) {
         res <- readRDS(fp)
         if (is.null(res$cif_table)) {
-            message("  Skipping ", basename(fp), " (no cif_table)")
+            cli::cli_alert_info(paste0("  Skipping ", basename(fp), " (no cif_table)"))
             return(NULL)
         }
         ct <- res$cif_table
@@ -210,26 +210,26 @@ if (length(preds_files) > 0) {
             )
         write.csv(cif_summary, file.path(results_dir, "cif_summary.csv"),
                   row.names = FALSE)
-        message(sprintf("Saved cif_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
+        cli::cli_alert_info(paste0(sprintf("Saved cif_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
                         nrow(cif_summary),
                         paste(sort(unique(cif_summary$setting)), collapse = ","),
                         paste(sort(unique(cif_summary$p)),       collapse = ","),
-                        paste(sort(unique(cif_summary$k)),       collapse = ",")))
+                        paste(sort(unique(cif_summary$k)),       collapse = ","))))
     } else {
-        message("No CIF tables found (run simulations first or check 01_simulations.R)")
+        cli::cli_alert_info(paste0("No CIF tables found (run simulations first or check 01_simulations.R)"))
     }
 }
 
 # ==============================================================================
 # 4. TIME-DEPENDENT AUC SUMMARY (pre-computed by 01_simulations.R)
 # ==============================================================================
-message("\n=== Time-dependent AUC ===")
+cli::cli_alert_info(paste0("\n=== Time-dependent AUC ==="))
 
 if (length(preds_files) > 0) {
     auc_list <- lapply(preds_files, function(fp) {
         res <- readRDS(fp)
         if (is.null(res$auc_table)) {
-            message("  Skipping ", basename(fp), " (no auc_table)")
+            cli::cli_alert_info(paste0("  Skipping ", basename(fp), " (no auc_table)"))
             return(NULL)
         }
         at <- res$auc_table
@@ -289,14 +289,14 @@ if (length(preds_files) > 0) {
             )
         write.csv(auc_summary, file.path(results_dir, "auc_summary.csv"),
                   row.names = FALSE)
-        message(sprintf("Saved auc_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
+        cli::cli_alert_info(paste0(sprintf("Saved auc_summary.csv  [%d rows, settings=%s, p=%s, k=%s]",
                         nrow(auc_summary),
                         paste(sort(unique(auc_summary$setting)), collapse = ","),
                         paste(sort(unique(auc_summary$p)),       collapse = ","),
-                        paste(sort(unique(auc_summary$k)),       collapse = ",")))
+                        paste(sort(unique(auc_summary$k)),       collapse = ","))))
     } else {
-        message("No AUC tables found (run simulations first or check 01_simulations.R)")
+        cli::cli_alert_info(paste0("No AUC tables found (run simulations first or check 01_simulations.R)"))
     }
 }
 
-message("\nEvaluation complete.")
+cli::cli_alert_info(paste0("\nEvaluation complete."))
