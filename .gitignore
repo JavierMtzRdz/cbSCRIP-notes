@@ -227,3 +227,20 @@ TSWLatexianTemp*
 .Rproj.user
 # embeded repositories
 cbSCRIP/
+results/simulation/
+figs/short_varsel_plot.png
+figs/varsel_plots/
+figs/brier_plots/
+figs/cif_plots/
+figs/auc_plots/
+figs/cv_plots/
+paper/*.pdf
+
+
+
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
