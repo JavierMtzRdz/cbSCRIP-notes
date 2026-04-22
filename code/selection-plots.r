@@ -60,15 +60,21 @@ sum_selec <- select_mod |>
         # Determine unique model size range up to p
         max_p <- .x$p[1]
         grid <- tibble(model_size = 1:max_p)
-        .x |>
+        res <- .x |>
             full_join(grid, by = "model_size") |>
             arrange(model_size) |>
-            mutate(
-                # Use linear approximation for missing points with extrapolation
-                Sensitivity = zoo::na.approx(Sensitivity, model_size, na.rm = FALSE, rule = 2),
-                Specificity = zoo::na.approx(Specificity, model_size, na.rm = FALSE, rule = 2)
-            ) |>
             fill(model, setting, dim, rep, p, k, .direction = "downup")
+        
+        # Only interpolate if we have at least 2 non-NA points
+        tryCatch({
+            if (sum(!is.na(res$Sensitivity)) >= 2 && sum(!is.na(res$Specificity)) >= 2) {
+                res <- res |> mutate(
+                    Sensitivity = zoo::na.approx(Sensitivity, model_size, na.rm = FALSE, rule = 2),
+                    Specificity = zoo::na.approx(Specificity, model_size, na.rm = FALSE, rule = 2)
+                )
+            }
+        }, error = function(e) { })
+        res
     })
 
 # 5. Summarize metrics across simulations
