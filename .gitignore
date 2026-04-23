@@ -235,7 +235,7 @@ figs/cif_plots/
 figs/auc_plots/
 figs/cv_plots/
 paper/*.pdf
-
+scratch/
 
 
 paper/*.aux
@@ -243,4 +243,4 @@ paper/*.log
 paper/*.out
 paper/*.bbl
 paper/*.blg
-paper/*.synctex.gz
+paper/*.synctex.gzscratch/
