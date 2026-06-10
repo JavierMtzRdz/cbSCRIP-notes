@@ -20,76 +20,41 @@ if (length(varsel_files) == 0) {
 
 cli::cli_alert_info(paste0("Reading varsel files..."))
 select_mod <- map_df(varsel_files, function(f) {
-    res <- readRDS(f)
-    # Ensure columns match expected types
+    res <- tryCatch(readRDS(f), error = function(e) NULL)
+    if (is.null(res) || nrow(res) == 0) return(NULL)
+    
+    if (!"k" %in% names(res)) {
+        fn <- basename(f)
+        if (grepl("_k([0-9]+)_", fn)) {
+            res$k <- as.numeric(sub(".*_k([0-9]+)_.*", "\\1", fn))
+        } else {
+            p_val <- if (!is.null(res$p)) res$p[1] else 120
+            res$k <- case_match(p_val, 120 ~ 20, 500 ~ 84, 1000 ~ 168, .default = 20)
+        }
+    }
+    
     res |> mutate(
         model = as.character(model),
         rep = as.numeric(rep),
         setting = as.numeric(setting),
-        p = as.numeric(p)
+        p = as.numeric(p),
+        k = as.numeric(k)
     )
 })
 
-# 2. Add k and dim
+# 2. Add dim label and clean model names
 select_mod <- select_mod |>
     mutate(
-        k = case_match(p,
-            120 ~ 20,
-            500 ~ 84,
-            1000 ~ 168,
-            .default = 20
-        ),
-        dim = glue("p = {p}, k = {k}")
+        dim = glue("p = {p}, k = {k}"),
+        model = case_match(model,
+            "enet-CR" ~ "enet-iCox",
+            "fastcmprsk" ~ "Penalized Fine-Gray",
+            "penalized Fine-Gray method (fastcmprsk)" ~ "Penalized Fine-Gray",
+            .default = model
+        )
     )
 
-# 3. Clean model names
-select_mod <- select_mod |>
-    mutate(model = case_match(model,
-        "enet-CR" ~ "enet-iCox",
-        "fastcmprsk" ~ "Penalized Fine-Gray",
-        "penalized Fine-Gray method (fastcmprsk)" ~ "Penalized Fine-Gray",
-        .default = model
-    ))
-
-# 4. Interpolate metrics for missing model sizes
-cli::cli_alert_info(paste0("Interpolating metrics..."))
-sum_selec <- select_mod |>
-    group_by(model, setting, dim, rep, p, k) |>
-    group_split() |>
-    map_dfr(~ {
-        # Determine unique model size range up to p
-        max_p <- .x$p[1]
-        grid <- tibble(model_size = 1:max_p)
-        res <- .x |>
-            full_join(grid, by = "model_size") |>
-            arrange(model_size) |>
-            fill(model, setting, dim, rep, p, k, .direction = "downup")
-        
-        # Only interpolate if we have at least 2 non-NA points
-        tryCatch({
-            if (sum(!is.na(res$Sensitivity)) >= 2 && sum(!is.na(res$Specificity)) >= 2) {
-                res <- res |> mutate(
-                    Sensitivity = zoo::na.approx(Sensitivity, model_size, na.rm = FALSE, rule = 2),
-                    Specificity = zoo::na.approx(Specificity, model_size, na.rm = FALSE, rule = 2)
-                )
-            }
-        }, error = function(e) { })
-        res
-    })
-
-# 5. Summarize metrics across simulations
-plot_data <- sum_selec |>
-    group_by(model_size, p, k, setting, model, dim) |>
-    summarise(
-        Sens_mean = mean(Sensitivity, na.rm = TRUE),
-        Sens_sd   = sd(Sensitivity,   na.rm = TRUE),
-        Spec_mean = mean(Specificity, na.rm = TRUE),
-        n_reps    = sum(!is.na(Sensitivity)),
-        .groups = "drop"
-    ) |>
-    arrange(p, model_size)
-
-# Palette matching cpl_palette in the supplement
+# Palette matching cpl_palette
 cpl_palette <- c(
     "cbSCRIP"             = "#277DA1",
     "Aalen-Johansen"      = "#43AA8B",
@@ -99,22 +64,81 @@ cpl_palette <- c(
     "SHBoost"             = "#F9844A"
 )
 
-# Set global Times New Roman theme if mytidyfunctions package is available
+# Set global theme if mytidyfunctions package is available
 if (requireNamespace("mytidyfunctions", quietly = TRUE)) {
     mytidyfunctions::set_mytheme(text = element_text(family = "Times New Roman"))
 }
 
-# Plot 1: Sensitivity vs. Model Size
-p1 <- ggplot(plot_data, aes(x = model_size, y = Sens_mean, color = model)) +
-    geom_ribbon(aes(ymin = Sens_mean - 1.96 * (Sens_sd / sqrt(n_reps)),
-                    ymax = Sens_mean + 1.96 * (Sens_sd / sqrt(n_reps)),
-                    fill = model), alpha = 0.15, colour = NA) +
-    geom_path() +
+# ==============================================================================
+# Plot 1: Sensitivity (TPR) vs. Model Size (with extrapolation & 95% CI)
+# ==============================================================================
+cli::cli_alert_info("Interpolating Sensitivity vs. Model Size...")
+
+sum_tpr <- select_mod |>
+    group_by(model, setting, dim, rep, p, k) |>
+    group_split() |>
+    map_dfr(~ {
+        max_p <- .x$p[1]
+        
+        # Deduplicate model_size per replicate by taking maximum sensitivity, minimum specificity, maximum MCC
+        clean_rep <- .x |>
+            group_by(model_size) |>
+            summarize(
+                Sensitivity = max(Sensitivity, na.rm = TRUE),
+                Specificity = min(Specificity, na.rm = TRUE),
+                MCC         = max(MCC, na.rm = TRUE),
+                .groups = "drop"
+            )
+        
+        # Anchor at model_size = 0 (0 sensitivity, 1 specificity, 0 MCC)
+        if (!0 %in% clean_rep$model_size) {
+            clean_rep <- bind_rows(tibble(model_size = 0, Sensitivity = 0, Specificity = 1, MCC = 0), clean_rep)
+        }
+        
+        grid <- tibble(model_size = 0:max_p)
+        res <- clean_rep |>
+            full_join(grid, by = "model_size") |>
+            arrange(model_size)
+        
+        # Extrapolate using rule = 2
+        res <- res |> mutate(
+            Sensitivity = zoo::na.approx(Sensitivity, model_size, na.rm = FALSE, rule = 2),
+            Specificity = zoo::na.approx(Specificity, model_size, na.rm = FALSE, rule = 2),
+            MCC         = zoo::na.approx(MCC, model_size, na.rm = FALSE, rule = 2),
+            model = .x$model[1],
+            setting = .x$setting[1],
+            dim = .x$dim[1],
+            rep = .x$rep[1],
+            p = .x$p[1],
+            k = .x$k[1]
+        )
+        res
+    }) |>
+    filter(model_size > 0)
+
+plot_data_tpr <- sum_tpr |>
+    group_by(model_size, p, k, setting, model, dim) |>
+    summarise(
+        Sens_mean = mean(Sensitivity, na.rm = TRUE),
+        Sens_sd   = sd(Sensitivity,   na.rm = TRUE),
+        n_reps    = sum(!is.na(Sensitivity)),
+        .groups = "drop"
+    ) |>
+    mutate(
+        Sens_sd = if_else(is.na(Sens_sd), 0, Sens_sd),
+        ymin = pmax(0, Sens_mean - 1.96 * (Sens_sd / sqrt(n_reps))),
+        ymax = pmin(1, Sens_mean + 1.96 * (Sens_sd / sqrt(n_reps)))
+    ) |>
+    arrange(p, model_size)
+
+p1 <- ggplot(plot_data_tpr, aes(x = model_size, y = Sens_mean, color = model)) +
+    geom_ribbon(aes(ymin = ymin, ymax = ymax, fill = model), alpha = 0.15, colour = NA) +
+    geom_path(linewidth = 0.7) +
     facet_grid(paste0("Setting ", setting) ~ fct_inorder(dim), scales = "free_x") +
     coord_cartesian(ylim = c(0, 1)) +
     scale_color_manual(values = cpl_palette) +
     scale_fill_manual(values = cpl_palette) +
-    labs(x = "Model Size", color = "Model", fill = "Model")
+    labs(x = "Model Size", y = "Sensitivity (TPR)", color = "Model", fill = "Model")
 
 ggsave(
     filename = "selection-tpr.png",
@@ -122,16 +146,115 @@ ggsave(
     path = figs_dir,
     width = 200, height = 120, units = "mm", dpi = 300, bg = "transparent"
 )
+cli::cli_alert_success("Generated selection-tpr.png")
 
-# Plot 3: ROC-like Curve (Sensitivity vs. 1 - Specificity)
-p3 <- ggplot(plot_data, aes(x = 1 - Spec_mean, y = Sens_mean, color = model)) +
-    geom_path() +
-    facet_grid(paste0("Setting ", setting) ~ fct_inorder(dim)) +
-    coord_equal() +
-    scale_x_continuous(breaks = c(.25, .5, .75, 1)) +
-    coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+
+# ==============================================================================
+# Plot 2: Matthews Correlation Coefficient (MCC) vs. Model Size (with 95% CI)
+# ==============================================================================
+cli::cli_alert_info("Interpolating MCC vs. Model Size...")
+
+plot_data_mcc <- sum_tpr |>
+    group_by(model_size, p, k, setting, model, dim) |>
+    summarise(
+        MCC_mean = mean(MCC, na.rm = TRUE),
+        MCC_sd   = sd(MCC,   na.rm = TRUE),
+        n_reps   = sum(!is.na(MCC)),
+        .groups = "drop"
+    ) |>
+    mutate(
+        MCC_sd = if_else(is.na(MCC_sd), 0, MCC_sd),
+        ymin = pmax(-1, MCC_mean - 1.96 * (MCC_sd / sqrt(n_reps))),
+        ymax = pmin(1, MCC_mean + 1.96 * (MCC_sd / sqrt(n_reps)))
+    ) |>
+    arrange(p, model_size)
+
+p2 <- ggplot(plot_data_mcc, aes(x = model_size, y = MCC_mean, color = model)) +
+    geom_ribbon(aes(ymin = ymin, ymax = ymax, fill = model), alpha = 0.15, colour = NA) +
+    geom_path(linewidth = 0.7) +
+    facet_grid(paste0("Setting ", setting) ~ fct_inorder(dim), scales = "free_x") +
+    coord_cartesian(ylim = c(-0.1, 1)) +
     scale_color_manual(values = cpl_palette) +
-    labs(x = "1 - Specificity", color = "Model")
+    scale_fill_manual(values = cpl_palette) +
+    labs(x = "Model Size", y = "Matthews Correlation Coefficient (MCC)", color = "Model", fill = "Model")
+
+ggsave(
+    filename = "selection-mcc.png",
+    plot = p2,
+    path = figs_dir,
+    width = 200, height = 120, units = "mm", dpi = 300, bg = "transparent"
+)
+cli::cli_alert_success("Generated selection-mcc.png")
+
+
+# ==============================================================================
+# Plot 3: Variable Selection ROC Curve (Sensitivity vs. 1 - Specificity with 95% CI)
+# ==============================================================================
+cli::cli_alert_info("Interpolating Variable Selection ROC curves...")
+
+common_fpr <- seq(0, 1, length.out = 101)
+
+sum_roc <- select_mod |>
+    group_by(model, setting, dim, rep, p, k) |>
+    group_split() |>
+    map_dfr(~ {
+        # Calculate FPR and TPR
+        clean_rep <- .x |>
+            mutate(FPR = pmax(0, pmin(1, 1 - Specificity)),
+                   TPR = pmax(0, pmin(1, Sensitivity))) |>
+            select(FPR, TPR) |>
+            filter(!is.na(FPR) & !is.na(TPR))
+        
+        # Add anchors (0,0) and (1,1)
+        clean_rep <- bind_rows(
+            tibble(FPR = 0, TPR = 0),
+            clean_rep,
+            tibble(FPR = 1, TPR = 1)
+        ) |>
+            arrange(FPR, TPR) |>
+            group_by(FPR) |>
+            summarize(TPR = max(TPR), .groups = "drop")
+        
+        # Interpolate onto common FPR grid
+        interp_tpr <- approx(x = clean_rep$FPR, y = clean_rep$TPR, xout = common_fpr, rule = 2)$y
+        
+        tibble(
+            FPR = common_fpr,
+            TPR = interp_tpr,
+            model = .x$model[1],
+            setting = .x$setting[1],
+            dim = .x$dim[1],
+            rep = .x$rep[1],
+            p = .x$p[1],
+            k = .x$k[1]
+        )
+    })
+
+plot_data_roc <- sum_roc |>
+    group_by(FPR, p, k, setting, model, dim) |>
+    summarise(
+        TPR_mean = mean(TPR, na.rm = TRUE),
+        TPR_sd   = sd(TPR,   na.rm = TRUE),
+        n_reps   = sum(!is.na(TPR)),
+        .groups = "drop"
+    ) |>
+    mutate(
+        TPR_sd = if_else(is.na(TPR_sd), 0, TPR_sd),
+        ymin = pmax(0, TPR_mean - 1.96 * (TPR_sd / sqrt(n_reps))),
+        ymax = pmin(1, TPR_mean + 1.96 * (TPR_sd / sqrt(n_reps)))
+    )
+
+p3 <- ggplot(plot_data_roc, aes(x = FPR, y = TPR_mean, color = model)) +
+    geom_ribbon(aes(ymin = ymin, ymax = ymax, fill = model), alpha = 0.15, colour = NA) +
+    geom_path(linewidth = 0.7) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey60") +
+    facet_grid(paste0("Setting ", setting) ~ fct_inorder(dim)) +
+    coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+    scale_x_continuous(breaks = c(0, .25, .5, .75, 1)) +
+    scale_y_continuous(breaks = c(0, .25, .5, .75, 1)) +
+    scale_color_manual(values = cpl_palette) +
+    scale_fill_manual(values = cpl_palette) +
+    labs(x = "1 - Specificity (FPR)", y = "Sensitivity (TPR)", color = "Model", fill = "Model")
 
 ggsave(
     filename = "selection-curve.png",
@@ -139,5 +262,6 @@ ggsave(
     path = figs_dir,
     width = 180, height = 180, units = "mm", dpi = 300, bg = "transparent"
 )
+cli::cli_alert_success("Generated selection-curve.png")
 
-cli::cli_alert_info(paste0("Successfully generated selection-tpr.png and selection-curve.png in figs/."))
+cli::cli_alert_info("Successfully generated selection-tpr.png, selection-mcc.png, and selection-curve.png in figs/.")
