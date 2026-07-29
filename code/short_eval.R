@@ -13,9 +13,10 @@ library(here)
 
 # Read command line arguments
 args <- commandArgs(trailingOnly = TRUE)
-settings <- if (length(args) >= 1) as.numeric(strsplit(args[1], ",")[[1]]) else c(1)
-p_vals <- if (length(args) >= 2) as.numeric(strsplit(args[2], ",")[[1]]) else c(120)
-reps <- if (length(args) >= 3) as.numeric(args[3]) else 5
+settings <- if (length(args) >= 1 && nzchar(args[1])) as.numeric(strsplit(args[1], ",")[[1]]) else c(1)
+p_vals <- if (length(args) >= 2 && nzchar(args[2])) as.numeric(strsplit(args[2], ",")[[1]]) else c(120)
+reps <- if (length(args) >= 3 && nzchar(args[3])) as.numeric(args[3]) else 5
+k_vals <- if (length(args) >= 4 && nzchar(args[4])) as.numeric(strsplit(args[4], ",")[[1]]) else NULL
 
 varsel_dir <- here("results", "simulation", "varsel")
 preds_dir <- here("results", "simulation", "preds")
@@ -29,18 +30,19 @@ cli::cli_alert_info(paste0("==========================================\n"))
 # 1. Variable Selection Evaluation
 varsel_files <- list.files(varsel_dir, pattern = "^varsel_s.*_p.*_rep.*\\.rds$", full.names = TRUE)
 matching_varsel <- varsel_files[sapply(basename(varsel_files), function(fn) {
-    parts <- strsplit(gsub("varsel_s|\\.rds", "", fn), "_")[[1]]
-    s <- as.numeric(parts[1])
-    p <- as.numeric(gsub("p", "", parts[2]))
-    r <- as.numeric(gsub("rep", "", parts[3]))
-    (s %in% settings) && (p %in% p_vals) && (r <= reps)
+    s <- as.numeric(sub(".*_s([0-9]+)_.*", "\\1", fn))
+    p <- as.numeric(sub(".*_p([0-9]+)_.*", "\\1", fn))
+    k <- as.numeric(sub(".*_k([0-9]+)_.*", "\\1", fn))
+    r <- as.numeric(sub(".*_rep([0-9]+)\\.rds", "\\1", fn))
+    k_match <- if (is.null(k_vals)) TRUE else (k %in% k_vals)
+    (s %in% settings) && (p %in% p_vals) && k_match && (r <= reps)
 })]
 
 if (length(matching_varsel) > 0) {
     varsel_results <- map_df(matching_varsel, readRDS)
     
     varsel_summary <- varsel_results %>%
-        group_by(model, p, setting) %>%
+        group_by(model, p, k, setting) %>%
         summarize(
             Mean_Sensitivity = mean(Sensitivity, na.rm = TRUE),
             Mean_Specificity = mean(Specificity, na.rm = TRUE),
@@ -82,11 +84,12 @@ if (length(matching_varsel) > 0) {
 # 2. Timing Aggregation
 pred_files <- list.files(preds_dir, pattern = "^models_s.*_p.*_rep.*\\.rds$", full.names = TRUE)
 matching_preds <- pred_files[sapply(basename(pred_files), function(fn) {
-    parts <- strsplit(gsub("models_s|\\.rds", "", fn), "_")[[1]]
-    s <- as.numeric(parts[1])
-    p <- as.numeric(gsub("p", "", parts[2]))
-    r <- as.numeric(gsub("rep", "", parts[3]))
-    (s %in% settings) && (p %in% p_vals) && (r <= reps)
+    s <- as.numeric(sub(".*_s([0-9]+)_.*", "\\1", fn))
+    p <- as.numeric(sub(".*_p([0-9]+)_.*", "\\1", fn))
+    k <- as.numeric(sub(".*_k([0-9]+)_.*", "\\1", fn))
+    r <- as.numeric(sub(".*_rep([0-9]+)\\.rds", "\\1", fn))
+    k_match <- if (is.null(k_vals)) TRUE else (k %in% k_vals)
+    (s %in% settings) && (p %in% p_vals) && k_match && (r <= reps)
 })]
 
 if (length(matching_preds) > 0) {

@@ -130,6 +130,7 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
     tryCatch({
         t_fg <- system.time({
             lambdas <- if (!is.null(cox_mod_path)) cox_mod_path$lambda else seq(0.1, 0.0001, length.out = 50)
+            lambdas <- lambdas[lambdas > 1e-4]
             fg_mod <- fastCrrp(Crisk(train$ftime, train$fstatus) ~ x_train,
                                penalty = "ENET", alpha = 0.5, lambda = lambdas)
         })["elapsed"]
@@ -341,7 +342,7 @@ cli::cli_alert_info(paste0("   Running cross-validation to select optimal lambda
 
 
 fit_cv <- tryCatch(
-    cv_cbSCRIP(Surv(ftime, fstatus) ~ ., cb_data = cb_mod$cb_data, nlambda = 30),
+    cv_cbSCRIP(Surv(ftime, fstatus) ~ ., cb_data = cb_mod$cb_data, nlambda = 30, select = "1se"),
     error = function(e) {
         cli::cli_alert_info(paste0("   cv_cbSCRIP failed: ", e$message))
         NULL
@@ -361,10 +362,10 @@ if (!is.null(fit_cv)) {
     }
     
     # Fit adjusted (unpenalized) model at lambda.1se
-    cli::cli_alert_info(paste0(glue("   Fitting adjusted model at lambda.1se: {fit_cv$lambda.1se}")))
+    cli::cli_alert_info(paste0(glue("   Fitting adjusted model at lambda.1se: {fit_cv$lambda.opt}")))
     cb_mod_refitted <- tryCatch(
         cbSCRIP(cb_data = fit_cv$cb_data,
-                lambda = fit_cv$lambda.1se),
+                lambda = fit_cv$lambda.opt),
         error = function(e) {
             cli::cli_alert_info(paste0("   Adjusted model refit failed at lambda.1se: ", e$message))
             NULL
