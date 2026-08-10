@@ -103,8 +103,8 @@ Finally, the gene expression and clinical datasets were merged by a unique `samp
 
 ```{r}
 # Process microarray data ---
-bladder_fpd1 <- read_delim(here::here("paper/data/GSE5479_Final_processed_data_1.txt"))
-bladder_fpd2 <- read_delim(here::here("paper/data/GSE5479_Final_processed_data_2.txt"))
+bladder_fpd1 <- read_delim(here::here("data/GSE5479_Final_processed_data_1.txt"))
+bladder_fpd2 <- read_delim(here::here("data/GSE5479_Final_processed_data_2.txt"))
 
 bladder_fpd <- t(cbind(bladder_fpd1[, -1], bladder_fpd2[, -1])) %>% 
     data.frame() %>% 
@@ -117,7 +117,7 @@ bladder_fpd <- t(cbind(bladder_fpd1[, -1], bladder_fpd2[, -1])) %>%
 
 # Process clinical information
 
-bladder_hd <- read_xls(here::here("paper/data/6517200/10780432ccr062940-sup-supplemental_file_1.xls")) %>% 
+bladder_hd <- read_xls(here::here("data/6517200/10780432ccr062940-sup-supplemental_file_1.xls")) %>% 
     clean_names() %>% 
     mutate(across(everything(), \(x)case_when(x == "-" ~ NA, 
                                               T ~ x))) %>% 
@@ -278,7 +278,7 @@ bladder_comp_adj <- model.matrix(~ .,
     as_tibble()
 
 saveRDS(bladder_comp_adj,
-        here("paper", "data", "bladder_comp_adj.rds"))
+        here("data", "bladder_comp_adj.rds"))
 
 ```
 
