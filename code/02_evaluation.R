@@ -53,6 +53,27 @@ if (length(varsel_files) > 0) {
     write.csv(varsel_summary, file.path(results_dir, "varsel_summary.csv"),
               row.names = FALSE)
     cli::cli_alert_info(paste0(sprintf("Saved varsel_summary.csv  [%d rows]", nrow(varsel_summary))))
+
+    # --- Correct Selection Rate (R2: exact recovery of the true support) ---
+    # csr_path = proportion of replicates where SOME lambda on the path recovers
+    # the true support exactly. This is an oracle/best-case rate: it assumes
+    # lambda is chosen perfectly, so it upper-bounds what CV would achieve.
+    #
+    # A "best fixed lambda" version is NOT computable here: lambda_max is derived
+    # from the data, so each replicate has its own grid (589 distinct lambdas
+    # across 20 replicates for s1/p120/k20, only 11 shared by >1 replicate).
+    # Grouping by lambda across replicates therefore yields groups of size ~1,
+    # and any statistic over them describes a single replicate, not a rate.
+    # The same caveat applies to the `csr` column of varsel_summary above.
+    csr_summary <- varsel_all |>
+        group_by(model, setting, p, k, rep) |>
+        summarise(hit = any(exact_match, na.rm = TRUE), .groups = "drop") |>
+        group_by(model, setting, p, k) |>
+        summarise(csr_path = mean(hit), n_reps = n(), .groups = "drop")
+
+    write.csv(csr_summary, file.path(results_dir, "csr_summary.csv"),
+              row.names = FALSE)
+    cli::cli_alert_info(paste0(sprintf("Saved csr_summary.csv  [%d rows]", nrow(csr_summary))))
 } else {
     cli::cli_alert_info(paste0("No varsel files found in ", varsel_dir))
 }
@@ -296,6 +317,60 @@ if (length(preds_files) > 0) {
                         paste(sort(unique(auc_summary$k)),       collapse = ","))))
     } else {
         cli::cli_alert_info(paste0("No AUC tables found (run simulations first or check 01_simulations.R)"))
+    }
+}
+
+# ==============================================================================
+# 5. FIT TIMING SUMMARY (pre-computed by 01_simulations.R)
+# ==============================================================================
+# Timings are only ever compared within a stage. "path" is a bare regularization
+# path used for the variable-selection comparison; "tuned" includes the
+# cross-validation needed to get a prediction-ready model. Mixing the two would
+# compare a no-CV fit against a 5-fold CV fit.
+cli::cli_alert_info(paste0("\n=== Fit timings ==="))
+
+if (length(preds_files) > 0) {
+    timing_list <- lapply(preds_files, function(fp) {
+        res <- readRDS(fp)
+        tm <- res$timing
+        # Bundles written before timings were grouped by stage carry a flat
+        # list; they are not comparable and are skipped rather than guessed at.
+        if (is.null(tm) || !all(c("path", "tuned") %in% names(tm))) return(NULL)
+
+        stage_rows <- function(stage) {
+            vals <- tm[[stage]]
+            tibble(
+                model   = names(vals),
+                stage   = stage,
+                seconds = as.numeric(unlist(lapply(vals, function(x) if (is.null(x)) NA_real_ else x))),
+                rep     = res$meta$seed,
+                setting = res$meta$setting,
+                p       = res$meta$p,
+                k       = res$meta$k
+            )
+        }
+        bind_rows(stage_rows("path"), stage_rows("tuned"))
+    })
+    timing_list <- Filter(Negate(is.null), timing_list)
+
+    if (length(timing_list) > 0) {
+        timing_summary <- bind_rows(timing_list) |>
+            group_by(model, stage, setting, p, k) |>
+            summarise(
+                seconds_mean = mean(seconds, na.rm = TRUE),
+                seconds_sd   = sd(seconds,   na.rm = TRUE),
+                n_reps       = sum(!is.na(seconds)),
+                .groups = "drop"
+            )
+        write.csv(timing_summary, file.path(results_dir, "timing_summary.csv"),
+                  row.names = FALSE)
+        cli::cli_alert_info(paste0(sprintf("Saved timing_summary.csv  [%d rows, stages=%s]",
+                        nrow(timing_summary),
+                        paste(sort(unique(timing_summary$stage)), collapse = ","))))
+    } else {
+        cli::cli_alert_info(paste0("No stage-grouped timings found. Bundles predating the ",
+                                   "timing fix in 01_simulations.R carry a flat, non-comparable ",
+                                   "timing list; rerun the simulations to populate this."))
     }
 }
 

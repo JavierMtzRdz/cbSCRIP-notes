@@ -100,25 +100,45 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
     y_train_cox1 <- survival::Surv(time = train$ftime, event = train$fstatus == 1)
     lm_ratio <- ifelse(length(y_train_cox) < ncol(x_train), 0, 0.001)
     cox_mod_path <- NULL
+    t_cox_path <- NA
     tryCatch({
-        cox_mod_path <- glmnet::glmnet(
-            x = x_train,
-            y = y_train_cox1,
-            family = "cox",
-            alpha = 0.5,
-            lambda.min.ratio = lm_ratio,
-            nlambda = 30
-        )
+        t_cox_path <- system.time({
+            cox_mod_path <- glmnet::glmnet(
+                x = x_train,
+                y = y_train_cox1,
+                family = "cox",
+                alpha = 0.5,
+                lambda.min.ratio = lm_ratio,
+                nlambda = 30
+            )
+        })["elapsed"]
     }, error = function(e) {
         cli::cli_alert_info(paste0("   glmnet path fitting failed: ", e$message))
     })
 
     # 2. cbSCRIP (Elastic Net Case-Base)
-    cb_mod <- NULL
-    t_cb <- NA
+    # The case-base dataset is built explicitly rather than letting cbSCRIP() do
+    # it internally, so its cost can be timed apart from the path fit. This is
+    # the same create_cb_data() call cbSCRIP() would make with these defaults.
+    # It matters for reporting: a real user pays cb_data + cv + refit, while the
+    # 30-lambda path below exists only for the variable-selection comparison.
+    cb_data <- NULL
+    t_cb_data <- NA
     tryCatch({
-        t_cb <- system.time({
-            cb_mod <- cbSCRIP(Surv(ftime, fstatus) ~ ., train, coeffs = "original", nlambda = 30, lambda.min.ratio = lmr)
+        t_cb_data <- system.time({
+            cb_data <- create_cb_data(Surv(ftime, fstatus) ~ ., train,
+                                      ratio = 50, ratio_event = "all")
+        })["elapsed"]
+    }, error = function(e) {
+        cli::cli_alert_info(paste0("   create_cb_data failed: ", e$message))
+    })
+
+    cb_mod <- NULL
+    t_cb_path <- NA
+    tryCatch({
+        t_cb_path <- system.time({
+            cb_mod <- cbSCRIP(Surv(ftime, fstatus) ~ ., train, cb_data = cb_data,
+                              coeffs = "original", nlambda = 30, lambda.min.ratio = lmr)
         })["elapsed"]
     }, error = function(e) {
         cli::cli_alert_info(paste0("   cbSCRIP fitting failed: ", e$message))
@@ -190,7 +210,9 @@ fit_all_models <- function(train, x_train, y_train_cox, x_test, y_test_cox) {
         aj_mod = aj_mod,
         sh_mod = sh_mod,
         t_cox = t_cox,
-        t_cb = t_cb,
+        t_cox_path = t_cox_path,
+        t_cb_data = t_cb_data,
+        t_cb_path = t_cb_path,
         t_fg = t_fg,
         t_rf = t_rf,
         t_sh = t_sh
@@ -208,17 +230,19 @@ rf_mod <- fits$rf_mod
 aj_mod <- fits$aj_mod
 sh_mod <- fits$sh_mod
 t_cox <- fits$t_cox
-t_cb <- fits$t_cb
+t_cox_path <- fits$t_cox_path
+t_cb_data <- fits$t_cb_data
+t_cb_path <- fits$t_cb_path
 t_fg <- fits$t_fg
 t_rf <- fits$t_rf
 t_sh <- fits$t_sh
 
-cli::cli_alert_info(paste0(sprintf("   - Fit times: enet-iCox=%s | cbSCRIP=%s | Penalized Fine-Gray=%s | Random Forest=%s | SHBoost=%s", 
-                if (is.na(t_cox)) "FAILED" else sprintf("%.2fs", t_cox),
-                if (is.na(t_cb)) "FAILED" else sprintf("%.2fs", t_cb),
-                if (is.na(t_fg)) "FAILED" else sprintf("%.2fs", t_fg),
-                if (is.na(t_rf)) "FAILED" else sprintf("%.2fs", t_rf),
-                if (is.na(t_sh)) "FAILED" else sprintf("%.2fs", t_sh))))
+fmt_secs <- function(x) if (is.na(x)) "FAILED" else sprintf("%.2fs", x)
+
+cli::cli_alert_info(paste0(sprintf("   - Path fit times (no CV): cbSCRIP=%s (cb_data %s + path %s) | enet-iCox=%s | Penalized Fine-Gray=%s",
+                fmt_secs(sum(c(t_cb_data, t_cb_path))),
+                fmt_secs(t_cb_data), fmt_secs(t_cb_path),
+                fmt_secs(t_cox_path), fmt_secs(t_fg))))
 
 
 
@@ -332,7 +356,11 @@ cli::cli_alert_info(paste0("   Computing Brier scores and AUC..."))
 # Time grid: 20 quantile points within observed event range
 brier_tp <- sort(unique(test$ftime))
 brier_tp <- brier_tp[is.finite(brier_tp) & brier_tp > 0]
-brier_tmax <- max(test$ftime[test$fstatus != 0], na.rm = TRUE)
+
+brier_tmax <- min(
+    max(test$ftime[test$fstatus != 0], na.rm = TRUE),
+    max(train$ftime[train$fstatus != 0], na.rm = TRUE)
+)
 brier_tp <- brier_tp[brier_tp <= brier_tmax]
 brier_tp <- sort(unique(quantile(brier_tp, probs = seq(0, 1, length.out = 20), type = 1)))
 
@@ -341,8 +369,14 @@ cli::cli_alert_info(paste0("   Running cross-validation to select optimal lambda
 
 
 
-fit_cv <- tryCatch(
-    cv_cbSCRIP(Surv(ftime, fstatus) ~ ., cb_data = cb_mod$cb_data, nlambda = 30, select = "1se"),
+t_cb_cv <- NA
+fit_cv <- tryCatch({
+    res <- NULL
+    t_cb_cv <- system.time({
+        res <- cv_cbSCRIP(Surv(ftime, fstatus) ~ ., cb_data = cb_mod$cb_data, nlambda = 30, select = "1se")
+    })["elapsed"]
+    res
+    },
     error = function(e) {
         cli::cli_alert_info(paste0("   cv_cbSCRIP failed: ", e$message))
         NULL
@@ -350,6 +384,7 @@ fit_cv <- tryCatch(
 )
 
 cb_mod_refitted <- NULL
+t_cb_refit <- NA
 if (!is.null(fit_cv)) {
     # Save the CV plot (since plot.cbSCRIP.cv returns a ggplot object, we use ggsave)
     cv_plots_dir <- here("figs", "cv_plots")
@@ -363,15 +398,26 @@ if (!is.null(fit_cv)) {
     
     # Fit adjusted (unpenalized) model at lambda.1se
     cli::cli_alert_info(paste0(glue("   Fitting adjusted model at lambda.1se: {fit_cv$lambda.opt}")))
-    cb_mod_refitted <- tryCatch(
-        cbSCRIP(cb_data = fit_cv$cb_data,
-                lambda = fit_cv$lambda.opt),
+    cb_mod_refitted <- tryCatch({
+        res <- NULL
+        t_cb_refit <- system.time({
+            res <- cbSCRIP(cb_data = fit_cv$cb_data, lambda = fit_cv$lambda.opt)
+        })["elapsed"]
+        res
+        },
         error = function(e) {
             cli::cli_alert_info(paste0("   Adjusted model refit failed at lambda.1se: ", e$message))
             NULL
         }
     )
 }
+
+
+t_cb_tuned <- sum(c(t_cb_data, t_cb_cv, t_cb_refit), na.rm = FALSE)
+
+cli::cli_alert_info(paste0(sprintf("   - Tuned fit times (with CV): cbSCRIP=%s (cb_data %s + cv %s + refit %s) | enet-iCox=%s | Random Forest=%s | SHBoost=%s",
+                fmt_secs(t_cb_tuned), fmt_secs(t_cb_data), fmt_secs(t_cb_cv), fmt_secs(t_cb_refit),
+                fmt_secs(t_cox), fmt_secs(t_rf), fmt_secs(t_sh))))
 
 # enet-iCox (cox_mod_cv) is already cross-validated via two.cv.CSlassos
 
@@ -509,12 +555,22 @@ results_bundle <- list(
         aj_mod = aj_mod,
         sh_mod = sh_mod
     ),
+
     timing = list(
-        enet_iCox = t_cox,
-        cbSCRIP = t_cb,
-        Penalized_Fine_Gray = t_fg,
-        Random_Forest = t_rf,
-        SHBoost = t_sh
+
+        path = list(
+            cbSCRIP = sum(c(t_cb_data, t_cb_path)),
+            enet_iCox = t_cox_path,
+            Penalized_Fine_Gray = t_fg
+        ),
+        tuned = list(
+            cbSCRIP = t_cb_tuned,
+            enet_iCox = t_cox,
+            Random_Forest = t_rf,
+            SHBoost = t_sh
+        ),
+        cbSCRIP_parts = list(cb_data = t_cb_data, path = t_cb_path,
+                             cv = t_cb_cv, refit = t_cb_refit)
     ),
     brier_table = brier_table,
     auc_table = auc_table,
