@@ -18,7 +18,6 @@ cbSCRIP-notes/
 │   ├── 02_evaluation.R      # Result aggregation, metric calculation, and plotting (Brier, AUC, C-index, CSR)
 │   ├── 03_benchmarks.R      # Empirical timing benchmark script for optimizer comparison
 │   └── 04_real_data.R       # Bladder cancer clinical data preprocessing and biomarker discovery
-├── paper/                   # Manuscript materials (cbSCRIP.tex, WileyNJDv5.cls, reviewer PDFs, compiled cbSCRIP.pdf)
 ├── figs/                    # Generated high-resolution figures used by manuscript
 ├── refs/                    # Bibliography database (competing-risk.bib)
 ├── suppl/                   # Quarto files for supplementary reports
